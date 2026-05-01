@@ -1,0 +1,23 @@
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  \.git
+ | \.venv
+ | venv
+ | node_modules
+ | frontend
+ | dist
+ | build
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+py_version = 311
+src_paths = ["backend/app", "backend/tests", "backend/scripts"]
+skip_glob = ["frontend/*", "node_modules/*", ".venv/*", "venv/*"]
+
