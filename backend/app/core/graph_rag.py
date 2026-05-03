@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import structlog
+from openai import APIError, APITimeoutError, AuthenticationError, RateLimitError
 
 from app.models.schemas import GraphContext, GraphEdge, GraphNode, Source
 
@@ -11,67 +13,146 @@ logger = structlog.get_logger()
 
 
 class GraphRAGService:
+    RULE_BASED_ALIASES: dict[str, tuple[str, str]] = {
+        "warfarin": ("drugs", "Warfarin"),
+        "aspirin": ("drugs", "Aspirin"),
+        "metformin": ("drugs", "Metformin"),
+        "furosemide": ("drugs", "Furosemide"),
+        "lisinopril": ("drugs", "Lisinopril"),
+        "ckd": ("diseases", "Chronic Kidney Disease"),
+        "chronic kidney disease": ("diseases", "Chronic Kidney Disease"),
+        "t2dm": ("diseases", "Type 2 Diabetes Mellitus"),
+        "diabetes": ("diseases", "Type 2 Diabetes Mellitus"),
+        "hba1c": ("lab_tests", "HbA1c"),
+        "bnp": ("lab_tests", "BNP"),
+        "egfr": ("lab_tests", "eGFR"),
+        "inr": ("lab_tests", "INR"),
+        "cyp2c9": ("genes", "CYP2C9"),
+        "vkorc1": ("genes", "VKORC1"),
+        "dyspnea": ("symptoms", "Dyspnea"),
+        "orthopnea": ("symptoms", "Orthopnea"),
+        "edema": ("symptoms", "Peripheral edema"),
+        "hypokalemia": ("symptoms", "Hypokalemia"),
+    }
+
     def __init__(self, openai_client, neo4j_client):
         self.openai = openai_client
         self.neo4j = neo4j_client
 
+    def extract_entities_rule_based(self, query: str) -> dict[str, list[str]]:
+        found: dict[str, list[str]] = {
+            "drugs": [],
+            "diseases": [],
+            "symptoms": [],
+            "genes": [],
+            "lab_tests": [],
+        }
+        text = query.lower()
+
+        for alias, (bucket, canonical) in self.RULE_BASED_ALIASES.items():
+            pattern = r"\b" + re.escape(alias.lower()) + r"\b"
+            if re.search(pattern, text):
+                if canonical not in found[bucket]:
+                    found[bucket].append(canonical)
+        return found
+
+    def merge_entities(
+        self, primary: dict[str, list[str]] | None, secondary: dict[str, list[str]] | None
+    ) -> dict[str, list[str]]:
+        merged: dict[str, list[str]] = {
+            "drugs": [],
+            "diseases": [],
+            "symptoms": [],
+            "genes": [],
+            "lab_tests": [],
+        }
+        for source in [primary or {}, secondary or {}]:
+            for key in merged:
+                values = source.get(key, [])
+                if not isinstance(values, list):
+                    continue
+                for value in values:
+                    item = str(value).strip()
+                    if item and item not in merged[key]:
+                        merged[key].append(item)
+        return merged
+
     async def extract_entities(self, query: str) -> dict[str, list[str]]:
-        """Use GPT-4o to extract medical entities from query."""
-        response = await self.openai.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {
-                    "role": "system",
-                    "content": 'Extract medical entities. Return JSON only: {"drugs": [], "diseases": [], "symptoms": [], "genes": [], "lab_tests": []}',
-                },
-                {"role": "user", "content": query},
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=200,
-        )
-        raw = response.choices[0].message.content or "{}"
-        parsed = json.loads(raw)
-        fallback = {"drugs": [], "diseases": [], "symptoms": [], "genes": [], "lab_tests": []}
-        for key in fallback:
-            value = parsed.get(key, [])
-            fallback[key] = [str(v) for v in value] if isinstance(value, list) else []
+        """Extract entities with rule-based aliases, then enrich with GPT when available."""
+        fallback = self.extract_entities_rule_based(query)
+        try:
+            response = await self.openai.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": 'Extract medical entities. Return JSON only: {"drugs": [], "diseases": [], "symptoms": [], "genes": [], "lab_tests": []}',
+                    },
+                    {"role": "user", "content": query},
+                ],
+                response_format={"type": "json_object"},
+                max_tokens=200,
+            )
+            raw = response.choices[0].message.content or "{}"
+            parsed = json.loads(raw)
+            llm_entities = {k: parsed.get(k, []) for k in fallback}
+            fallback = self.merge_entities(fallback, llm_entities)
+        except (AuthenticationError, APIError, RateLimitError, APITimeoutError, TimeoutError) as exc:
+            logger.warning("entity_extraction_openai_fallback", error=str(exc))
+        except Exception as exc:
+            logger.warning("entity_extraction_failed", error=str(exc))
         return fallback
 
     async def traverse_graph(self, entities: dict[str, list[str]], depth: int = 2) -> GraphContext:
-        all_names = []
+        all_names: list[str] = []
         for entity_list in entities.values():
-            all_names.extend([str(e).lower() for e in entity_list])
+            all_names.extend([str(e).strip() for e in entity_list if str(e).strip()])
 
-        if not all_names:
+        deduped_names: list[str] = []
+        seen: set[str] = set()
+        for name in all_names:
+            lowered = name.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            deduped_names.append(name)
+
+        if not deduped_names:
             return GraphContext(nodes=[], edges=[], traversal_depth=0, entities_found=[])
 
         safe_depth = max(1, min(depth, 3))
-        cypher = f"""
+        cypher = """
         MATCH (start)
         WHERE (start:Drug OR start:Disease OR start:Symptom OR start:Gene OR start:LabTest)
-        AND toLower(start.name) IN $names
-        WITH start
-        MATCH path = (start)-[r*1..{safe_depth}]-(connected)
-        WHERE connected:Drug OR connected:Disease OR connected:Symptom OR connected:Gene OR connected:LabTest
-        WITH start, relationships(path) AS rels, nodes(path) AS path_nodes
-        UNWIND path_nodes AS n
-        WITH COLLECT(DISTINCT n) AS all_nodes, COLLECT(DISTINCT rels) AS all_rels
-        RETURN all_nodes, all_rels
+          AND toLower(coalesce(start.name, "")) = toLower($name)
+        OPTIONAL MATCH path = (start)-[*1..DEPTH]-(connected)
+        WHERE connected IS NULL
+           OR connected:Drug
+           OR connected:Disease
+           OR connected:Symptom
+           OR connected:Gene
+           OR connected:LabTest
+        WITH collect(DISTINCT start) + collect(DISTINCT connected) AS raw_nodes,
+             collect(path) AS raw_paths
+        WITH [n IN raw_nodes WHERE n IS NOT NULL] AS nodes,
+             [p IN raw_paths WHERE p IS NOT NULL] AS paths
+        WITH nodes, reduce(all_rels = [], p IN paths | all_rels + relationships(p)) AS rels
+        UNWIND CASE WHEN rels = [] THEN [NULL] ELSE rels END AS rel
+        WITH nodes, collect(
+          CASE
+            WHEN rel IS NULL THEN NULL
+            ELSE {
+              source_id: coalesce(startNode(rel).id, startNode(rel).name, elementId(startNode(rel))),
+              target_id: coalesce(endNode(rel).id, endNode(rel).name, elementId(endNode(rel))),
+              relationship: type(rel),
+              properties: properties(rel)
+            }
+          END
+        ) AS rel_rows
+        RETURN nodes, [row IN rel_rows WHERE row IS NOT NULL] AS rel_rows
         LIMIT 1
         """
-
-        try:
-            results = await self.neo4j.execute_query(cypher, {"names": all_names})
-        except Exception as exc:
-            logger.warning("graph_traversal_primary_failed", error=str(exc))
-            simpler_cypher = """
-            MATCH (start)-[r]-(connected)
-            WHERE toLower(start.name) IN $names
-            AND (connected:Drug OR connected:Disease OR connected:Symptom OR connected:Gene OR connected:LabTest)
-            RETURN start, r, connected
-            LIMIT 80
-            """
-            results = await self.neo4j.execute_query(simpler_cypher, {"names": all_names})
+        cypher = cypher.replace("DEPTH", str(safe_depth))
 
         nodes_map: dict[str, GraphNode] = {}
         edges_map: dict[tuple[str, str, str], GraphEdge] = {}
@@ -79,8 +160,15 @@ class GraphRAGService:
         def parse_node(node: Any) -> GraphNode | None:
             if not node:
                 return None
-            props = dict(node)
-            node_id = str(props.get("id", props.get("name", "")))
+            try:
+                props = dict(node)
+            except Exception:
+                props = {}
+            node_id = str(props.get("id", props.get("name", "")) or "")
+            if not node_id:
+                fallback_id = getattr(node, "element_id", None) or getattr(node, "id", None)
+                if fallback_id is not None:
+                    node_id = str(fallback_id)
             if not node_id:
                 return None
             labels = list(node.labels) if hasattr(node, "labels") else ["Unknown"]
@@ -93,15 +181,18 @@ class GraphRAGService:
                 },
             )
 
-        def upsert_edge(rel: Any):
-            if not rel:
+        def upsert_edge(edge_row: Any):
+            if not edge_row:
                 return
-            rel_props = dict(rel)
-            s_node = rel.start_node
-            t_node = rel.end_node
-            source_id = str(dict(s_node).get("id", dict(s_node).get("name", "")))
-            target_id = str(dict(t_node).get("id", dict(t_node).get("name", "")))
-            rel_type = rel.type if hasattr(rel, "type") else str(type(rel).__name__)
+            if not isinstance(edge_row, dict):
+                return
+            source_id = str(edge_row.get("source_id", "") or "")
+            target_id = str(edge_row.get("target_id", "") or "")
+            rel_type = str(edge_row.get("relationship", "") or "")
+            if not source_id or not target_id or not rel_type:
+                return
+            raw_props = edge_row.get("properties", {})
+            rel_props = raw_props if isinstance(raw_props, dict) else {}
             key = (source_id, target_id, rel_type)
             edges_map[key] = GraphEdge(
                 source=source_id,
@@ -111,28 +202,24 @@ class GraphRAGService:
                 properties={k: str(v) for k, v in rel_props.items() if v is not None},
             )
 
-        for record in results:
-            if "all_nodes" in record:
-                for node in record.get("all_nodes", []) or []:
+        for entity_name in deduped_names:
+            try:
+                results = await self.neo4j.execute_query(cypher, {"name": entity_name})
+            except Exception as exc:
+                logger.warning("graph_traversal_primary_failed", entity=entity_name, error=str(exc))
+                continue
+
+            for record in results:
+                for node in record.get("nodes", []) or []:
                     parsed = parse_node(node)
                     if parsed:
                         nodes_map[parsed.id] = parsed
-            if "all_rels" in record:
-                rel_lists = record.get("all_rels", []) or []
-                for rel_list in rel_lists:
-                    if isinstance(rel_list, list):
-                        for rel in rel_list:
-                            upsert_edge(rel)
 
-            for key in ["start", "connected"]:
-                if key in record and record[key]:
-                    parsed = parse_node(record[key])
-                    if parsed:
-                        nodes_map[parsed.id] = parsed
-            if "r" in record and record["r"]:
-                upsert_edge(record["r"])
+                for rel_row in record.get("rel_rows", []) or []:
+                    upsert_edge(rel_row)
 
-        entities_found = [n.label for n in nodes_map.values() if n.label.lower() in all_names]
+        lowered_names = {name.lower() for name in deduped_names}
+        entities_found = [n.label for n in nodes_map.values() if n.label.lower() in lowered_names]
 
         return GraphContext(
             nodes=list(nodes_map.values())[:50],

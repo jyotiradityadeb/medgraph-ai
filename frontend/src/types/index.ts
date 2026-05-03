@@ -46,11 +46,15 @@ export interface StreamMetadata {
   graph_edges_count: number;
   sources_count: number;
   entities_found: string[];
+  mode?: "live" | "fallback";
+  reason?: string;
+  llm_status?: "ok" | "fallback";
 }
 
 export interface QueryDoneEvent {
   type: "done";
   processing_time: number;
+  llm_status?: "ok" | "fallback";
   sources: Source[];
   graph_context: GraphContext;
 }

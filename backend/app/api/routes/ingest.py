@@ -1,13 +1,12 @@
-from __future__ import annotations
-
 import json
 from typing import Any
 
+import fitz
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
-from app.api.deps import get_neo4j_service, get_qdrant_service, limiter
+from app.api.deps import get_neo4j_service, get_qdrant_service
 from app.config import get_settings
 from app.core.multimodal import MultiModalIngestPipeline
 from app.db.neo4j_client import Neo4jClient
@@ -43,17 +42,17 @@ class TableIngestRequest(BaseModel):
 
 
 @router.post("/text", response_model=IngestResponse)
-@limiter.limit("60/minute")
 async def ingest_text(
     request: Request,
-    payload: IngestRequest,
+    payload: dict[str, Any],
     _qdrant: QdrantService = Depends(get_qdrant_service),
     _neo4j: Neo4jClient = Depends(get_neo4j_service),
 ) -> IngestResponse:
     _ = request
+    validated = IngestRequest.model_validate(payload)
     pipeline = get_pipeline()
     doc_id, entities = await pipeline.ingest_text(
-        payload.content, source=payload.source, metadata=payload.metadata
+        validated.content, source=validated.source, metadata=validated.metadata
     )
     return IngestResponse(
         success=True,
@@ -64,7 +63,6 @@ async def ingest_text(
 
 
 @router.post("/image")
-@limiter.limit("60/minute")
 async def ingest_image(
     request: Request,
     file: UploadFile = File(...),
@@ -85,7 +83,6 @@ async def ingest_image(
 
 
 @router.post("/audio")
-@limiter.limit("60/minute")
 async def ingest_audio(
     request: Request,
     file: UploadFile = File(...),
@@ -113,7 +110,6 @@ async def ingest_audio(
 
 
 @router.post("/table")
-@limiter.limit("60/minute")
 async def ingest_table(
     request: Request,
     payload: TableIngestRequest,
@@ -131,3 +127,42 @@ async def ingest_table(
         payload.lab_values, metadata=metadata
     )
     return {"document_id": document_id, "abnormal_values": abnormal_values, "success": True}
+
+
+@router.post("/pdf")
+async def ingest_pdf(
+    request: Request,
+    file: UploadFile = File(...),
+    _qdrant: QdrantService = Depends(get_qdrant_service),
+    _neo4j: Neo4jClient = Depends(get_neo4j_service),
+):
+    _ = request
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only application/pdf is supported.")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Empty PDF file.")
+
+    try:
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid PDF file: {exc}") from exc
+
+    full_text = "\n".join([page.get_text() for page in doc])
+    if not full_text or len(full_text.strip()) < 50:
+        raise HTTPException(status_code=400, detail="Could not extract text from PDF")
+
+    pipeline = get_pipeline()
+    doc_id, _entities = await pipeline.ingest_text(
+        full_text,
+        source=file.filename or "uploaded.pdf",
+        metadata={"source_type": "pdf", "pages": len(doc)},
+    )
+
+    return {
+        "document_id": doc_id,
+        "success": True,
+        "pages": len(doc),
+        "characters": len(full_text),
+    }

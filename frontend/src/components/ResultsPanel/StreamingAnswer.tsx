@@ -21,7 +21,15 @@ function intentColor(intent: string): string {
 }
 
 function renderLine(line: string, index: number) {
-  if (line.startsWith("⚠️")) {
+  if (line.startsWith("## ")) {
+    return (
+      <h3 key={index} className="pt-2 text-sm font-semibold tracking-wide text-slate-900">
+        {line.replace(/^##\s+/, "")}
+      </h3>
+    );
+  }
+
+  if (line.startsWith("INTERACTION WARNING:")) {
     return (
       <div key={index} className="rounded-md border border-amber-300 bg-amber-50 p-2 text-amber-800">
         {line}
@@ -29,7 +37,7 @@ function renderLine(line: string, index: number) {
     );
   }
 
-  if (line.startsWith("🚫")) {
+  if (line.startsWith("CONTRAINDICATION:")) {
     return (
       <div key={index} className="rounded-md border border-red-300 bg-red-50 p-2 text-red-800">
         {line}
@@ -37,7 +45,7 @@ function renderLine(line: string, index: number) {
     );
   }
 
-  if (line.startsWith("🔴")) {
+  if (line.startsWith("CRITICAL VALUE:")) {
     return (
       <div key={index} className="rounded-md border border-red-500 bg-red-100 p-2 font-medium text-red-900">
         {line}
@@ -75,6 +83,11 @@ export function StreamingAnswer({ answer, metadata }: StreamingAnswerProps) {
             <span className={`rounded-full px-2 py-1 text-xs font-medium ${intentColor(metadata.intent)}`}>
               {metadata.intent}
             </span>
+            {(metadata.mode === "fallback" || metadata.llm_status === "fallback") && (
+              <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">
+                Fallback Mode
+              </span>
+            )}
             <span className="rounded-full bg-slate-200 px-2 py-1 text-xs text-slate-700">{metadata.graph_nodes_count} graph nodes</span>
             {metadata.modalities_used.map((modality) => (
               <span key={modality} className="rounded-full border border-slate-300 bg-white px-2 py-1 text-xs text-slate-600">
@@ -104,4 +117,3 @@ export function StreamingAnswer({ answer, metadata }: StreamingAnswerProps) {
     </div>
   );
 }
-

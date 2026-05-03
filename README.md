@@ -53,6 +53,61 @@ docker-compose logs -f backend
 open http://localhost:3000
 ```
 
+## Fast Smoke Test
+
+```bash
+docker compose down
+docker compose build backend frontend
+docker compose up -d
+docker compose ps
+docker logs medgraph-backend
+curl http://localhost:8000/health
+curl http://localhost:6333
+```
+
+## Running the demo
+
+### Step 1 — Start services
+```bash
+cp .env.example .env
+# Edit .env and add your OPENAI_API_KEY
+docker-compose up -d --build
+```
+
+### Step 2 — Wait for services to be healthy (60-90 seconds)
+```bash
+docker-compose ps
+# All services should show "healthy" or "running"
+```
+
+### Step 3 — Seed the knowledge graph and vector data
+```bash
+docker-compose exec backend python scripts/seed_graph.py
+docker-compose exec backend python scripts/seed_vectors.py
+docker-compose exec backend python scripts/seed_demo_scenarios.py
+```
+
+### Step 4 — Verify everything works
+```bash
+docker-compose exec backend python scripts/demo_check.py
+# Should print: STATUS: DEMO READY
+```
+
+### Step 5 — Open the app
+http://localhost:3000
+
+### Demo queries to try
+- "Warfarin interactions in a patient on metformin and lisinopril"
+- "Interpret: HbA1c 8.9%, BNP 450, eGFR 52"
+- "Differential diagnosis for dyspnea with orthopnea and bilateral edema"
+- "First-line treatment for T2DM with HbA1c 8.5%"
+- "How does furosemide cause hypokalemia?"
+
+### Troubleshooting
+- If Neo4j takes too long: check docker-compose logs neo4j
+- If models are slow first run: they are downloading, wait 2-3 min
+- If OpenAI errors: check your API key in .env, fallbacks are active
+
 ## API Endpoints
 
 | Method | Endpoint | Description |

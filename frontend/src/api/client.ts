@@ -67,6 +67,11 @@ export const api = {
       fd.append("metadata", JSON.stringify(metadata));
       return postForm<{ document_id: string; transcript: string }>("/api/v1/ingest/audio", fd);
     },
+    pdf: (file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      return postForm<{ document_id: string; pages: number; success: boolean }>("/api/v1/ingest/pdf", fd);
+    },
     table: (labValues: Record<string, number>, patientId = "") =>
       post<{ document_id: string; abnormal_values: unknown[] }>("/api/v1/ingest/table", {
         lab_values: labValues,

@@ -1,4 +1,4 @@
-import { Mic, Square, UploadCloud } from "lucide-react";
+import { FileText, Mic, Square, UploadCloud } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import toast from "react-hot-toast";
@@ -33,6 +33,8 @@ export function IngestPage() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [transcript, setTranscript] = useState("");
   const [audioLoading, setAudioLoading] = useState(false);
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -55,6 +57,12 @@ export function IngestPage() {
     accept: { "audio/*": [], "video/*": [] },
     maxFiles: 1,
     onDrop: (files) => setAudioFile(files[0] ?? null),
+  });
+
+  const pdfDrop = useDropzone({
+    accept: { "application/pdf": [".pdf"] },
+    maxFiles: 1,
+    onDrop: (files) => setPdfFile(files[0] ?? null),
   });
 
   const imagePreview = useMemo(() => (imageFile ? URL.createObjectURL(imageFile) : ""), [imageFile]);
@@ -104,6 +112,19 @@ export function IngestPage() {
       toast.error(error instanceof Error ? error.message : "Failed to ingest audio");
     } finally {
       setAudioLoading(false);
+    }
+  };
+
+  const submitPdf = async () => {
+    if (!pdfFile) return;
+    setPdfLoading(true);
+    try {
+      const res = await api.ingest.pdf(pdfFile);
+      toast.success(`Ingested PDF (${res.pages} pages) · ${res.document_id}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to ingest PDF");
+    } finally {
+      setPdfLoading(false);
     }
   };
 
@@ -310,7 +331,19 @@ export function IngestPage() {
           </div>
         )}
       </section>
+
+      <section className="rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-3 text-sm font-semibold text-slate-700">Section 5 - PDF Document</h2>
+        <div {...pdfDrop.getRootProps()} className="cursor-pointer rounded-md border border-dashed border-slate-300 p-4 text-center">
+          <input {...pdfDrop.getInputProps()} />
+          <FileText className="mx-auto mb-1 h-5 w-5 text-primary" />
+          <p className="text-sm text-slate-600">Drop PDF or click to upload</p>
+        </div>
+        {pdfFile && <p className="mt-2 text-xs text-slate-500">{pdfFile.name}</p>}
+        <button onClick={() => void submitPdf()} disabled={!pdfFile || pdfLoading} className="mt-3 rounded-md bg-primary px-4 py-2 text-sm text-white disabled:opacity-60">
+          {pdfLoading ? "Processing..." : "Ingest PDF"}
+        </button>
+      </section>
     </div>
   );
 }
-
