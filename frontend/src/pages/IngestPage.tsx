@@ -1,5 +1,5 @@
 import { FileText, Mic, Square, UploadCloud } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import toast from "react-hot-toast";
 
@@ -65,12 +65,16 @@ export function IngestPage() {
     onDrop: (files) => setPdfFile(files[0] ?? null),
   });
 
-  const imagePreview = useMemo(() => (imageFile ? URL.createObjectURL(imageFile) : ""), [imageFile]);
+  const [imagePreview, setImagePreview] = useState("");
   useEffect(() => {
-    return () => {
-      if (imagePreview) URL.revokeObjectURL(imagePreview);
-    };
-  }, [imagePreview]);
+    if (!imageFile) {
+      setImagePreview("");
+      return;
+    }
+    const url = URL.createObjectURL(imageFile);
+    setImagePreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [imageFile]);
 
   const submitNote = async (e: FormEvent) => {
     e.preventDefault();

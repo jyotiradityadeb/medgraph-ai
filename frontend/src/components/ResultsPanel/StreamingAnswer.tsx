@@ -1,4 +1,6 @@
 import { motion } from "framer-motion";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import type { StreamMetadata } from "@/types";
 
@@ -20,60 +22,9 @@ function intentColor(intent: string): string {
   return map[intent] || "bg-slate-100 text-slate-700";
 }
 
-function renderLine(line: string, index: number) {
-  if (line.startsWith("## ")) {
-    return (
-      <h3 key={index} className="pt-2 text-sm font-semibold tracking-wide text-slate-900">
-        {line.replace(/^##\s+/, "")}
-      </h3>
-    );
-  }
-
-  if (line.startsWith("INTERACTION WARNING:")) {
-    return (
-      <div key={index} className="rounded-md border border-amber-300 bg-amber-50 p-2 text-amber-800">
-        {line}
-      </div>
-    );
-  }
-
-  if (line.startsWith("CONTRAINDICATION:")) {
-    return (
-      <div key={index} className="rounded-md border border-red-300 bg-red-50 p-2 text-red-800">
-        {line}
-      </div>
-    );
-  }
-
-  if (line.startsWith("CRITICAL VALUE:")) {
-    return (
-      <div key={index} className="rounded-md border border-red-500 bg-red-100 p-2 font-medium text-red-900">
-        {line}
-      </div>
-    );
-  }
-
-  const withCitations = line.split(/(\[Doc\s+\d+\])/g);
-  return (
-    <p key={index} className="text-sm leading-6 text-slate-700">
-      {withCitations.map((part, idx) =>
-        /\[Doc\s+\d+\]/.test(part) ? (
-          <sup
-            key={`${part}-${idx}`}
-            className="mx-0.5 cursor-pointer rounded border border-primary/30 bg-primary/10 px-1 text-[10px] font-medium text-primary"
-          >
-            {part}
-          </sup>
-        ) : (
-          <span key={`${part}-${idx}`}>{part}</span>
-        )
-      )}
-    </p>
-  );
-}
-
 export function StreamingAnswer({ answer, metadata }: StreamingAnswerProps) {
   const confidencePct = Math.round((metadata?.confidence ?? 0) * 100);
+  const isFallback = metadata?.mode === "fallback" || metadata?.llm_status === "fallback";
 
   return (
     <div className="space-y-3">
@@ -83,12 +34,14 @@ export function StreamingAnswer({ answer, metadata }: StreamingAnswerProps) {
             <span className={`rounded-full px-2 py-1 text-xs font-medium ${intentColor(metadata.intent)}`}>
               {metadata.intent}
             </span>
-            {(metadata.mode === "fallback" || metadata.llm_status === "fallback") && (
+            {isFallback && (
               <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">
                 Fallback Mode
               </span>
             )}
-            <span className="rounded-full bg-slate-200 px-2 py-1 text-xs text-slate-700">{metadata.graph_nodes_count} graph nodes</span>
+            <span className="rounded-full bg-slate-200 px-2 py-1 text-xs text-slate-700">
+              {metadata.graph_nodes_count} graph nodes
+            </span>
             {metadata.modalities_used.map((modality) => (
               <span key={modality} className="rounded-full border border-slate-300 bg-white px-2 py-1 text-xs text-slate-600">
                 {modality}
@@ -108,11 +61,26 @@ export function StreamingAnswer({ answer, metadata }: StreamingAnswerProps) {
         </div>
       )}
 
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-2">
-        {answer
-          .split("\n")
-          .filter((line) => line.trim().length > 0)
-          .map((line, index) => renderLine(line, index))}
+      {isFallback && (
+        <div
+          style={{
+            background: "#FAEEDA",
+            border: "1px solid #BA7517",
+            padding: "8px 12px",
+            borderRadius: "6px",
+            marginBottom: "12px",
+          }}
+        >
+          ⚠️ AI synthesis unavailable. Showing structured evidence summary only.
+        </div>
+      )}
+
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="prose prose-sm max-w-none text-slate-700 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:tracking-wide [&_h2]:text-slate-900 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-slate-900 [&_ul]:pl-4 [&_li]:leading-6 [&_p]:leading-6"
+      >
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
       </motion.div>
     </div>
   );

@@ -188,7 +188,6 @@ export function QueryPanel() {
                   <span className="mb-1 block text-slate-600">Model</span>
                   <select value={model} onChange={(e) => setModel(e.target.value)} className="w-full rounded-md border border-slate-300 px-2 py-2">
                     <option value="gpt-4o">GPT-4o</option>
-                    <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
                   </select>
                 </label>
                 <label className="text-sm sm:col-span-2">
