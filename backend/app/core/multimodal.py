@@ -94,6 +94,9 @@ class MultiModalIngestPipeline:
                     source=source or "text_ingest",
                     entities=entities_found,
                 )
+                await neo4j_module.neo4j_client.link_document_to_graph_nodes(
+                    doc_id, entities_found
+                )
             except Exception as exc:
                 logger.warning("neo4j_upsert_skipped", doc_id=doc_id, error=str(exc))
 

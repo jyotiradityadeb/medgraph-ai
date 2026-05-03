@@ -87,6 +87,35 @@ class Neo4jClient:
                 {"entity": entity, "document_id": document_id},
             )
 
+    async def link_document_to_graph_nodes(
+        self, document_id: str, entity_names: list[str]
+    ) -> None:
+        """Create (Document)-[:MENTIONS]->(typed_node) edges for matched graph entities."""
+        if not entity_names:
+            return
+        for name in entity_names:
+            try:
+                await self.execute_write(
+                    """
+                    MATCH (node)
+                    WHERE (node:Drug OR node:Disease OR node:Symptom OR node:Gene
+                           OR node:LabTest OR node:Treatment OR node:Protein)
+                      AND toLower(coalesce(node.name, '')) = toLower($name)
+                    WITH node LIMIT 1
+                    MATCH (doc:Document {id: $doc_id})
+                    MERGE (doc)-[r:MENTIONS]->(node)
+                    SET r.source_doc = $doc_id
+                    """,
+                    {"name": name, "doc_id": document_id},
+                )
+            except Exception as exc:
+                logger.warning(
+                    "link_document_to_graph_nodes.failed",
+                    name=name,
+                    doc_id=document_id,
+                    error=str(exc),
+                )
+
     async def get_basic_stats(self) -> dict[str, int]:
         nodes = await self.execute_query("MATCH (n) RETURN count(n) AS c")
         rels = await self.execute_query("MATCH ()-[r]->() RETURN count(r) AS c")
