@@ -13,7 +13,6 @@ from app.db.qdrant_client import QdrantService
 from app.models.schemas import IngestRequest, IngestResponse
 
 router = APIRouter(tags=["ingest"])
-settings = get_settings()
 
 _MAX_FILE_BYTES = 50_000_000
 
