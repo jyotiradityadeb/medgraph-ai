@@ -2,68 +2,48 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
-
-import redis.asyncio as aioredis
-
-from app.config import get_settings
-
-logger = logging.getLogger(__name__)
+import time
 
 
 class QueryCache:
-    def __init__(self, ttl_seconds: int = 300):
+    def __init__(self, ttl_seconds: int = 300, max_size: int = 100):
+        self._cache: dict[str, dict] = {}
         self.ttl = ttl_seconds
-        self._client: aioredis.Redis | None = None
-
-    def _redis(self) -> aioredis.Redis:
-        if self._client is None:
-            settings = get_settings()
-            self._client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-        return self._client
+        self.max_size = max_size
+        self.hits = 0
+        self.misses = 0
 
     def _key(self, query: str, modalities: list, top_k: int) -> str:
         payload = json.dumps({"q": query.lower().strip(), "m": sorted(modalities), "k": top_k})
-        return "qcache:" + hashlib.sha256(payload.encode()).hexdigest()[:16]
+        return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
     async def get(self, query: str, modalities: list, top_k: int) -> dict | None:
         key = self._key(query, modalities, top_k)
-        try:
-            val = await self._redis().get(key)
-            if val:
-                return json.loads(val)
-        except Exception as exc:
-            logger.warning("cache.get.failed key=%s error=%s", key, exc)
+        entry = self._cache.get(key)
+        if entry and time.time() - entry["ts"] < self.ttl:
+            self.hits += 1
+            return entry["data"]
+        self.misses += 1
         return None
 
     async def set(self, query: str, modalities: list, top_k: int, data: dict) -> None:
+        if len(self._cache) >= self.max_size:
+            oldest = min(self._cache.keys(), key=lambda k: self._cache[k]["ts"])
+            del self._cache[oldest]
         key = self._key(query, modalities, top_k)
-        try:
-            await self._redis().setex(key, self.ttl, json.dumps(data))
-        except Exception as exc:
-            logger.warning("cache.set.failed key=%s error=%s", key, exc)
+        self._cache[key] = {"data": data, "ts": time.time()}
 
     async def stats(self) -> dict:
-        try:
-            client = self._redis()
-            hits = int(await client.get("cache:hits") or 0)
-            misses = int(await client.get("cache:misses") or 0)
-            total = hits + misses
-            keys = await client.keys("qcache:*")
-            return {
-                "hits": hits,
-                "misses": misses,
-                "hit_rate": round(hits / total, 3) if total else 0.0,
-                "cached_queries": len(keys),
-            }
-        except Exception as exc:
-            logger.warning("cache.stats.failed error=%s", exc)
-            return {"hits": 0, "misses": 0, "hit_rate": 0.0, "cached_queries": 0}
+        total = self.hits + self.misses
+        return {
+            "hits": self.hits,
+            "misses": self.misses,
+            "hit_rate": round(self.hits / total, 3) if total > 0 else 0.0,
+            "cached_queries": len(self._cache),
+        }
 
     async def close(self) -> None:
-        if self._client:
-            await self._client.aclose()
-            self._client = None
+        pass
 
 
 query_cache = QueryCache()
