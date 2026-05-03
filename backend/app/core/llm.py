@@ -417,6 +417,59 @@ class _FallbackChunk:
         self.choices = [_FallbackChoice(content)]
 
 
+def _parse_cited_doc_ids(answer: str) -> list[str]:
+    return re.findall(r"\[Doc\s+(\d+)\]", answer)
+
+
+def _check_answer_grounding(
+    answer: str,
+    sources: list[Any],
+    graph_context: dict[str, Any] | None,
+) -> tuple[str, list[str]]:
+    cited_ids = _parse_cited_doc_ids(answer)
+    cited_sources: list[str] = []
+    for raw_id in cited_ids:
+        idx = int(raw_id) - 1
+        if 0 <= idx < len(sources):
+            source = sources[idx]
+            src_id = _safe_str(getattr(source, "id", None) or (source.get("id") if isinstance(source, dict) else None))
+            if src_id:
+                cited_sources.append(src_id)
+
+    graph = graph_context or {}
+    node_labels = {
+        _safe_str(n.get("label", "")).lower()
+        for n in (graph.get("nodes") or [])
+        if isinstance(n, dict)
+    }
+    answer_lower = answer.lower()
+    source_texts = " ".join(
+        _safe_str(getattr(s, "content", None) or (s.get("content") if isinstance(s, dict) else "")).lower()
+        for s in sources
+    )
+
+    _DRUG_RE = re.compile(
+        r"\b(warfarin|aspirin|metformin|furosemide|lisinopril|atorvastatin|amlodipine|"
+        r"digoxin|amiodarone|vancomycin|ciprofloxacin|amoxicillin|azithromycin|doxycycline|"
+        r"sertraline|escitalopram|quetiapine|lithium|haloperidol|clopidogrel|rivaroxaban|"
+        r"apixaban|dabigatran|heparin|insulin|metoprolol|losartan|ramipril|omeprazole|"
+        r"spironolactone|carvedilol)\b",
+        re.IGNORECASE,
+    )
+    mentioned_drugs = {m.group(0).lower() for m in _DRUG_RE.finditer(answer)}
+    ungrounded = [
+        d for d in mentioned_drugs
+        if d not in source_texts and d not in node_labels
+    ]
+    if ungrounded:
+        logger.warning("hallucination_guard.ungrounded_drugs", drugs=ungrounded)
+        grounding_check = "warning"
+    else:
+        grounding_check = "passed"
+
+    return grounding_check, cited_sources
+
+
 class LLMSynthesizer:
     def __init__(self, openai_client):
         self.client = openai_client

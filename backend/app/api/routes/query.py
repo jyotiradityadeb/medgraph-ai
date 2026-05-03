@@ -12,7 +12,7 @@ from app.api.deps import get_neo4j_service, get_openai_client, get_qdrant_servic
 from app.config import get_settings
 from app.core.cache import query_cache
 from app.core.graph_rag import GraphRAGService
-from app.core.llm import LLMSynthesizer
+from app.core.llm import LLMSynthesizer, _check_answer_grounding
 from app.core.query_processor import QueryProcessor
 from app.core.retrieval import MultiModalRetriever
 from app.db.neo4j_client import Neo4jClient
@@ -252,10 +252,17 @@ async def query(
             await metrics.record_query(
                 processing_time * 1000, modalities_used, len(graph_context.nodes)
             )
+
+            grounding_check, cited_sources = _check_answer_grounding(
+                full_answer, sources, graph_context.model_dump()
+            )
+
             done_event = {
                 "type": "done",
                 "processing_time": processing_time,
                 "llm_status": llm_status,
+                "grounding_check": grounding_check,
+                "cited_sources": cited_sources,
                 "sources": [s.model_dump() for s in sources],
                 "graph_context": {
                     **graph_context.model_dump(),

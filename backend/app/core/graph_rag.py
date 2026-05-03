@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -11,29 +12,20 @@ from app.models.schemas import GraphContext, GraphEdge, GraphNode, Source
 
 logger = structlog.get_logger()
 
+_ALIASES_PATH = Path(__file__).parent.parent / "data" / "entity_aliases.json"
+
+
+def _load_aliases() -> dict[str, tuple[str, str]]:
+    try:
+        raw: dict[str, list[str]] = json.loads(_ALIASES_PATH.read_text(encoding="utf-8"))
+        return {alias: (bucket, canonical) for alias, (bucket, canonical) in raw.items()}
+    except Exception as exc:
+        logger.warning("entity_aliases.load.failed", error=str(exc))
+        return {}
+
 
 class GraphRAGService:
-    RULE_BASED_ALIASES: dict[str, tuple[str, str]] = {
-        "warfarin": ("drugs", "Warfarin"),
-        "aspirin": ("drugs", "Aspirin"),
-        "metformin": ("drugs", "Metformin"),
-        "furosemide": ("drugs", "Furosemide"),
-        "lisinopril": ("drugs", "Lisinopril"),
-        "ckd": ("diseases", "Chronic Kidney Disease"),
-        "chronic kidney disease": ("diseases", "Chronic Kidney Disease"),
-        "t2dm": ("diseases", "Type 2 Diabetes Mellitus"),
-        "diabetes": ("diseases", "Type 2 Diabetes Mellitus"),
-        "hba1c": ("lab_tests", "HbA1c"),
-        "bnp": ("lab_tests", "BNP"),
-        "egfr": ("lab_tests", "eGFR"),
-        "inr": ("lab_tests", "INR"),
-        "cyp2c9": ("genes", "CYP2C9"),
-        "vkorc1": ("genes", "VKORC1"),
-        "dyspnea": ("symptoms", "Dyspnea"),
-        "orthopnea": ("symptoms", "Orthopnea"),
-        "edema": ("symptoms", "Peripheral edema"),
-        "hypokalemia": ("symptoms", "Hypokalemia"),
-    }
+    RULE_BASED_ALIASES: dict[str, tuple[str, str]] = _load_aliases()
 
     def __init__(self, openai_client, neo4j_client):
         self.openai = openai_client
