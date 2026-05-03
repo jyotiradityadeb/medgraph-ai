@@ -58,9 +58,13 @@ class Neo4jClient:
         self, query: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
         payload = params or {}
-        async with self.driver.session() as session:
-            result = await session.run(query, payload)
+
+        async def _work(tx):
+            result = await tx.run(query, payload)
             return [record.data() async for record in result]
+
+        async with self.driver.session() as session:
+            return await session.execute_write(_work)
 
     async def upsert_document(
         self, document_id: str, content: str, source: str, entities: list[str]

@@ -58,6 +58,19 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("shutdown.neo4j.close.failed", error=str(exc))
 
+    from app.core.cache import query_cache
+    from app.utils.metrics import metrics as _metrics
+
+    try:
+        await query_cache.close()
+    except Exception as exc:
+        logger.warning("shutdown.redis_cache.close.failed", error=str(exc))
+
+    try:
+        await _metrics.close()
+    except Exception as exc:
+        logger.warning("shutdown.redis_metrics.close.failed", error=str(exc))
+
 
 app = FastAPI(title="MedGraph AI API", version="1.0.0", lifespan=lifespan)
 app.state.limiter = limiter

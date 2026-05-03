@@ -2,12 +2,14 @@ import json
 import time
 from typing import Any
 
+import redis.asyncio as aioredis
 import structlog
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from openai import APIError, APITimeoutError, AsyncOpenAI, AuthenticationError, RateLimitError
 
 from app.api.deps import get_neo4j_service, get_openai_client, get_qdrant_service
+from app.config import get_settings
 from app.core.cache import query_cache
 from app.core.graph_rag import GraphRAGService
 from app.core.llm import LLMSynthesizer
@@ -21,7 +23,12 @@ from app.utils.metrics import metrics
 router = APIRouter(tags=["query"])
 logger = structlog.get_logger()
 
-query_history: list[dict[str, Any]] = []
+_HISTORY_KEY = "query_history"
+_HISTORY_MAX = 500
+
+
+def _get_redis() -> aioredis.Redis:
+    return aioredis.from_url(get_settings().REDIS_URL, decode_responses=True)
 
 
 @router.post("/query")
@@ -53,7 +60,7 @@ async def query(
         full_answer = ""
 
         try:
-            cache_entry = query_cache.get(
+            cache_entry = await query_cache.get(
                 expanded_query, query_request.modalities, query_request.top_k
             )
             if cache_entry:
@@ -122,11 +129,11 @@ async def query(
                     )
                 except Exception as exc:
                     logger.error("retrieval_failed", error=str(exc))
-                    metrics.record_error("retrieval_error")
+                    await metrics.record_error("retrieval_error")
                     yield f"data: {json.dumps({'type': 'error', 'message': 'Retrieval service unavailable.'})}\n\n"
                     return
                 for modality in failed_modalities:
-                    metrics.record_error(f"retrieval_{modality}")
+                    await metrics.record_error(f"retrieval_{modality}")
 
                 graph_unavailable = False
                 if query_request.use_graph:
@@ -136,7 +143,7 @@ async def query(
                         )
                     except Exception as exc:
                         logger.warning("graph_traversal_degraded", error=str(exc))
-                        metrics.record_error("graph_error")
+                        await metrics.record_error("graph_error")
                         graph_context = GraphContext(
                             nodes=[], edges=[], traversal_depth=0, entities_found=[]
                         )
@@ -146,7 +153,7 @@ async def query(
                         nodes=[], edges=[], traversal_depth=0, entities_found=[]
                     )
 
-                query_cache.set(
+                await query_cache.set(
                     expanded_query,
                     query_request.modalities,
                     query_request.top_k,
@@ -160,7 +167,13 @@ async def query(
                 )
 
             modalities_used = sorted({s.modality for s in sources})
-            confidence = min(0.95, len(sources) * 0.1 + len(graph_context.nodes) * 0.02)
+
+            if sources:
+                avg_score = sum(s.score for s in sources) / len(sources)
+                graph_boost = min(0.15, len(graph_context.nodes) * 0.005)
+                confidence = round(min(0.95, avg_score + graph_boost), 2)
+            else:
+                confidence = 0.0
 
             context = graph_service.build_context_string(sources, graph_context)
             stream_result = await synthesizer.generate_streaming(
@@ -178,7 +191,7 @@ async def query(
             metadata = {
                 "type": "metadata",
                 "intent": intent_result.get("intent", "general"),
-                "confidence": round(confidence, 2),
+                "confidence": confidence,
                 "modalities_used": modalities_used,
                 "graph_nodes_count": len(graph_context.nodes),
                 "graph_edges_count": len(graph_context.edges),
@@ -203,7 +216,7 @@ async def query(
                         yield f"data: {json.dumps({'type': 'chunk', 'content': content})}\n\n"
             except Exception as exc:
                 logger.warning("llm_stream_degraded", error=str(exc))
-                metrics.record_error("llm_stream_error")
+                await metrics.record_error("llm_stream_error")
                 fallback_payload = synthesizer.build_fallback_payload(
                     expanded_query,
                     context,
@@ -211,7 +224,7 @@ async def query(
                     graph_context=graph_context.model_dump(),
                 )
                 llm_status = "fallback"
-                yield f"data: {json.dumps({'type': 'metadata', 'mode': fallback_payload['mode'], 'reason': fallback_payload['reason'], 'intent': intent_result.get('intent', 'general'), 'confidence': round(confidence, 2), 'modalities_used': modalities_used, 'graph_nodes_count': len(graph_context.nodes), 'graph_edges_count': len(graph_context.edges), 'sources_count': len(sources), 'entities_found': graph_context.entities_found, 'graph_unavailable': graph_unavailable, 'failed_modalities': failed_modalities, 'llm_status': llm_status})}\n\n"
+                yield f"data: {json.dumps({'type': 'metadata', 'mode': fallback_payload['mode'], 'reason': fallback_payload['reason'], 'intent': intent_result.get('intent', 'general'), 'confidence': confidence, 'modalities_used': modalities_used, 'graph_nodes_count': len(graph_context.nodes), 'graph_edges_count': len(graph_context.edges), 'sources_count': len(sources), 'entities_found': graph_context.entities_found, 'graph_unavailable': graph_unavailable, 'failed_modalities': failed_modalities, 'llm_status': llm_status})}\n\n"
                 full_answer = ""
                 for line in fallback_payload["answer"].splitlines():
                     content = f"{line}\n"
@@ -228,7 +241,7 @@ async def query(
                     graph_context=graph_context.model_dump(),
                 )
                 llm_status = "fallback"
-                yield f"data: {json.dumps({'type': 'metadata', 'mode': fallback_payload['mode'], 'reason': fallback_payload['reason'], 'intent': intent_result.get('intent', 'general'), 'confidence': round(confidence, 2), 'modalities_used': modalities_used, 'graph_nodes_count': len(graph_context.nodes), 'graph_edges_count': len(graph_context.edges), 'sources_count': len(sources), 'entities_found': graph_context.entities_found, 'graph_unavailable': graph_unavailable, 'failed_modalities': failed_modalities, 'llm_status': llm_status})}\n\n"
+                yield f"data: {json.dumps({'type': 'metadata', 'mode': fallback_payload['mode'], 'reason': fallback_payload['reason'], 'intent': intent_result.get('intent', 'general'), 'confidence': confidence, 'modalities_used': modalities_used, 'graph_nodes_count': len(graph_context.nodes), 'graph_edges_count': len(graph_context.edges), 'sources_count': len(sources), 'entities_found': graph_context.entities_found, 'graph_unavailable': graph_unavailable, 'failed_modalities': failed_modalities, 'llm_status': llm_status})}\n\n"
                 full_answer = ""
                 for line in fallback_payload["answer"].splitlines():
                     content = f"{line}\n"
@@ -236,7 +249,9 @@ async def query(
                     yield f"data: {json.dumps({'type': 'chunk', 'content': content})}\n\n"
 
             processing_time = round(time.time() - start, 2)
-            metrics.record_query(processing_time * 1000, modalities_used, len(graph_context.nodes))
+            await metrics.record_query(
+                processing_time * 1000, modalities_used, len(graph_context.nodes)
+            )
             done_event = {
                 "type": "done",
                 "processing_time": processing_time,
@@ -256,7 +271,7 @@ async def query(
             }
             yield f"data: {json.dumps(done_event)}\n\n"
 
-            query_history.append(
+            history_entry = json.dumps(
                 {
                     "query": query_request.query,
                     "intent": intent_result.get("intent"),
@@ -267,11 +282,17 @@ async def query(
                     "answer_preview": full_answer[:250],
                 }
             )
-            if len(query_history) > 50:
-                query_history.pop(0)
+            try:
+                r = _get_redis()
+                await r.lpush(_HISTORY_KEY, history_entry)
+                await r.ltrim(_HISTORY_KEY, 0, _HISTORY_MAX - 1)
+                await r.aclose()
+            except Exception as exc:
+                logger.warning("query_history.redis.failed", error=str(exc))
+
         except Exception as exc:
             logger.error("query_failed", error=str(exc))
-            metrics.record_error("query_error")
+            await metrics.record_error("query_error")
             yield f"data: {json.dumps({'type': 'error', 'message': 'Query failed due to retrieval/backend issue.'})}\n\n"
 
     return StreamingResponse(
@@ -285,4 +306,11 @@ async def query(
 @router.get("/history")
 async def get_history(request: Request):
     _ = request
-    return {"history": list(reversed(query_history[-20:]))}
+    try:
+        r = _get_redis()
+        raw = await r.lrange(_HISTORY_KEY, 0, 19)
+        await r.aclose()
+        return {"history": [json.loads(item) for item in raw]}
+    except Exception as exc:
+        logger.warning("query_history.get.failed", error=str(exc))
+        return {"history": []}
