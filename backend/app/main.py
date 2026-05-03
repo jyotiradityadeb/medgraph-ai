@@ -9,6 +9,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.deps import build_neo4j_client, get_neo4j_service, get_qdrant_service, limiter
 from app.api.middleware.auth import APIKeyMiddleware
+from app.api.middleware.request_id import RequestIDMiddleware
 from app.api.routes.graph import router as graph_router
 from app.api.routes.ingest import router as ingest_router
 from app.api.routes.metrics import router as metrics_router
@@ -88,7 +89,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# APIKeyMiddleware is added last so it runs first (outermost layer)
+# Outer middlewares (added last = run first on request)
+app.add_middleware(RequestIDMiddleware)
 app.add_middleware(APIKeyMiddleware)
 
 app.include_router(query_router, prefix="/api/v1/query")
@@ -105,8 +107,27 @@ async def health():
     qdrant_ok = await qdrant_service.verify_connectivity()
     neo4j_ok = await neo4j_service.verify_connectivity()
 
+    graph_seeded = False
+    vectors_seeded = False
+
+    if neo4j_ok:
+        try:
+            stats = await neo4j_service.get_basic_stats()
+            graph_seeded = stats.get("nodes", 0) > 100
+        except Exception:
+            pass
+
+    if qdrant_ok:
+        try:
+            info = await qdrant_service.get_collection_info("medical_text")
+            vectors_seeded = (info or {}).get("points_count", 0) > 50
+        except Exception:
+            pass
+
     return {
         "status": "ok",
         "services": {"qdrant": qdrant_ok, "neo4j": neo4j_ok},
+        "graph_seeded": graph_seeded,
+        "vectors_seeded": vectors_seeded,
         "version": "1.0.0",
     }

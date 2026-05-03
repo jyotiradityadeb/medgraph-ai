@@ -18,6 +18,7 @@ from app.core.retrieval import MultiModalRetriever
 from app.db.neo4j_client import Neo4jClient
 from app.db.qdrant_client import QdrantService
 from app.models.schemas import GraphContext, QueryRequest, Source
+from app.utils.audit_log import audit_log
 from app.utils.metrics import metrics
 
 router = APIRouter(tags=["query"])
@@ -277,6 +278,16 @@ async def query(
                 },
             }
             yield f"data: {json.dumps(done_event)}\n\n"
+
+            audit_log.log_query(
+                query=expanded_query,
+                intent=intent_result.get("intent", "general"),
+                sources_count=len(sources),
+                graph_nodes_count=len(graph_context.nodes),
+                llm_status=llm_status,
+                processing_time_ms=processing_time * 1000,
+                extra={"grounding_check": grounding_check},
+            )
 
             history_entry = json.dumps(
                 {
