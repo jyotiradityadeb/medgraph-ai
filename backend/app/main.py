@@ -8,6 +8,7 @@ from slowapi.extension import _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.deps import build_neo4j_client, get_neo4j_service, get_qdrant_service, limiter
+from app.api.middleware.auth import APIKeyMiddleware
 from app.api.routes.graph import router as graph_router
 from app.api.routes.ingest import router as ingest_router
 from app.api.routes.metrics import router as metrics_router
@@ -68,11 +69,14 @@ app.add_middleware(SlowAPIMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[settings.FRONTEND_URL],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# APIKeyMiddleware is added last so it runs first (outermost layer)
+app.add_middleware(APIKeyMiddleware)
 
 app.include_router(query_router, prefix="/api/v1/query")
 app.include_router(ingest_router, prefix="/api/v1/ingest")

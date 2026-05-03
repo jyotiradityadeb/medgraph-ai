@@ -8,9 +8,14 @@ import type {
 } from "@/types";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API_KEY = import.meta.env.VITE_API_KEY as string | undefined;
+
+function authHeaders(): Record<string, string> {
+  return API_KEY ? { "X-API-Key": API_KEY } : {};
+}
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(API_BASE + path);
+  const res = await fetch(API_BASE + path, { headers: authHeaders() });
   if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
   return res.json() as Promise<T>;
 }
@@ -18,7 +23,7 @@ async function get<T>(path: string): Promise<T> {
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(API_BASE + path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
@@ -26,7 +31,11 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function postForm<T>(path: string, formData: FormData): Promise<T> {
-  const res = await fetch(API_BASE + path, { method: "POST", body: formData });
+  const res = await fetch(API_BASE + path, {
+    method: "POST",
+    headers: authHeaders(),
+    body: formData,
+  });
   if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
   return res.json() as Promise<T>;
 }
@@ -38,7 +47,7 @@ export const api = {
     stream: (request: QueryRequest, signal?: AbortSignal): Promise<Response> =>
       fetch(API_BASE + "/api/v1/query", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(request),
         signal,
       }),

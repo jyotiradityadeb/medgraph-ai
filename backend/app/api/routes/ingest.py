@@ -6,8 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
-from app.api.deps import get_neo4j_service, get_qdrant_service
-from app.config import get_settings
+from app.api.deps import get_neo4j_service, get_openai_client, get_qdrant_service, limiter
 from app.core.multimodal import MultiModalIngestPipeline
 from app.db.neo4j_client import Neo4jClient
 from app.db.qdrant_client import QdrantService
@@ -16,10 +15,7 @@ from app.models.schemas import IngestRequest, IngestResponse
 router = APIRouter(tags=["ingest"])
 settings = get_settings()
 
-
-def get_pipeline() -> MultiModalIngestPipeline:
-    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-    return MultiModalIngestPipeline(client)
+_MAX_FILE_BYTES = 50_000_000
 
 
 def _parse_metadata(raw_metadata: str | None) -> dict[str, Any]:
@@ -42,15 +38,16 @@ class TableIngestRequest(BaseModel):
 
 
 @router.post("/text", response_model=IngestResponse)
+@limiter.limit("10/minute")
 async def ingest_text(
     request: Request,
     payload: dict[str, Any],
+    openai_client: AsyncOpenAI = Depends(get_openai_client),
     _qdrant: QdrantService = Depends(get_qdrant_service),
     _neo4j: Neo4jClient = Depends(get_neo4j_service),
 ) -> IngestResponse:
-    _ = request
     validated = IngestRequest.model_validate(payload)
-    pipeline = get_pipeline()
+    pipeline = MultiModalIngestPipeline(openai_client)
     doc_id, entities = await pipeline.ingest_text(
         validated.content, source=validated.source, metadata=validated.metadata
     )
@@ -63,19 +60,22 @@ async def ingest_text(
 
 
 @router.post("/image")
+@limiter.limit("10/minute")
 async def ingest_image(
     request: Request,
     file: UploadFile = File(...),
     metadata: str | None = Form(default=None),
+    openai_client: AsyncOpenAI = Depends(get_openai_client),
     _qdrant: QdrantService = Depends(get_qdrant_service),
     _neo4j: Neo4jClient = Depends(get_neo4j_service),
 ):
-    _ = request
     image_bytes = await file.read()
     if not image_bytes:
         raise HTTPException(status_code=400, detail="Empty image file.")
+    if len(image_bytes) > _MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds 50 MB limit.")
     parsed_metadata = _parse_metadata(metadata)
-    pipeline = get_pipeline()
+    pipeline = MultiModalIngestPipeline(openai_client)
     document_id, description = await pipeline.ingest_image(
         image_bytes=image_bytes, metadata=parsed_metadata
     )
@@ -83,19 +83,22 @@ async def ingest_image(
 
 
 @router.post("/audio")
+@limiter.limit("10/minute")
 async def ingest_audio(
     request: Request,
     file: UploadFile = File(...),
     metadata: str | None = Form(default=None),
+    openai_client: AsyncOpenAI = Depends(get_openai_client),
     _qdrant: QdrantService = Depends(get_qdrant_service),
     _neo4j: Neo4jClient = Depends(get_neo4j_service),
 ):
-    _ = request
     audio_bytes = await file.read()
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="Empty audio file.")
+    if len(audio_bytes) > _MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds 50 MB limit.")
     parsed_metadata = _parse_metadata(metadata)
-    pipeline = get_pipeline()
+    pipeline = MultiModalIngestPipeline(openai_client)
     document_id, transcript, duration = await pipeline.ingest_audio(
         audio_bytes=audio_bytes,
         filename=file.filename or "audio.mp3",
@@ -110,19 +113,20 @@ async def ingest_audio(
 
 
 @router.post("/table")
+@limiter.limit("10/minute")
 async def ingest_table(
     request: Request,
     payload: TableIngestRequest,
+    openai_client: AsyncOpenAI = Depends(get_openai_client),
     _qdrant: QdrantService = Depends(get_qdrant_service),
     _neo4j: Neo4jClient = Depends(get_neo4j_service),
 ):
-    _ = request
     metadata = {
         "patient_id": payload.patient_id,
         "timestamp": payload.timestamp,
         **payload.metadata,
     }
-    pipeline = get_pipeline()
+    pipeline = MultiModalIngestPipeline(openai_client)
     document_id, abnormal_values = await pipeline.ingest_lab_table(
         payload.lab_values, metadata=metadata
     )
@@ -130,19 +134,22 @@ async def ingest_table(
 
 
 @router.post("/pdf")
+@limiter.limit("10/minute")
 async def ingest_pdf(
     request: Request,
     file: UploadFile = File(...),
+    openai_client: AsyncOpenAI = Depends(get_openai_client),
     _qdrant: QdrantService = Depends(get_qdrant_service),
     _neo4j: Neo4jClient = Depends(get_neo4j_service),
 ):
-    _ = request
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only application/pdf is supported.")
 
     file_bytes = await file.read()
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Empty PDF file.")
+    if len(file_bytes) > _MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds 50 MB limit.")
 
     try:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -153,7 +160,7 @@ async def ingest_pdf(
     if not full_text or len(full_text.strip()) < 50:
         raise HTTPException(status_code=400, detail="Could not extract text from PDF")
 
-    pipeline = get_pipeline()
+    pipeline = MultiModalIngestPipeline(openai_client)
     doc_id, _entities = await pipeline.ingest_text(
         full_text,
         source=file.filename or "uploaded.pdf",

@@ -6,11 +6,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
+    API_KEY: str = ""
+    FRONTEND_URL: str = "http://localhost:3000"
     QDRANT_HOST: str = "qdrant"
     QDRANT_PORT: int = 6333
     NEO4J_URI: str = "bolt://neo4j:7687"
     NEO4J_USER: str = "neo4j"
     NEO4J_PASSWORD: str = "medgraph123"
+    REDIS_URL: str = "redis://redis:6379"
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
     LLM_MODEL: str = "gpt-4o"
     APP_ENV: str = "development"
