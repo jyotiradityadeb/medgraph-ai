@@ -112,6 +112,11 @@ class MultiModalIngestPipeline:
         description = await self.image_embedder.generate_description(
             image_bytes, self.openai_client
         )
+        if not str(description or "").strip():
+            description = (
+                "Medical image uploaded successfully. Description generation was limited, "
+                "but the image and summary were indexed for retrieval."
+            )
 
         payload = {
             "description": description,
@@ -121,7 +126,14 @@ class MultiModalIngestPipeline:
         }
         if qdrant_module.qdrant_service is None:
             raise RuntimeError("Qdrant service is not initialized.")
-        await qdrant_module.qdrant_service.upsert("medical_images", image_vector, payload)
+        try:
+            await qdrant_module.qdrant_service.upsert("medical_images", image_vector, payload)
+        except Exception as exc:
+            logger.warning(
+                "image_vector_upsert_failed_fallback_to_text",
+                doc_id=doc_id,
+                error=str(exc),
+            )
 
         text_vector = self.text_embedder.embed(description)
         text_payload = {

@@ -126,12 +126,31 @@ async def explore_graph(
     MATCH (start)
     WHERE (start:Drug OR start:Disease OR start:Symptom OR start:Gene OR start:LabTest)
       AND toLower(coalesce(start.name, '')) = toLower($entity)
-    OPTIONAL MATCH path = (start)-[r*1..{safe_depth}]-(connected)
-    WHERE connected:Drug OR connected:Disease OR connected:Symptom OR connected:Gene OR connected:LabTest
-    WITH start,
-         collect(DISTINCT nodes(path)) AS node_paths,
-         collect(DISTINCT relationships(path)) AS rel_paths
-    RETURN start, node_paths, rel_paths
+    OPTIONAL MATCH path = (start)-[*1..{safe_depth}]-(connected)
+    WHERE connected IS NULL
+       OR connected:Drug
+       OR connected:Disease
+       OR connected:Symptom
+       OR connected:Gene
+       OR connected:LabTest
+    WITH collect(DISTINCT start) + collect(DISTINCT connected) AS raw_nodes,
+         collect(path) AS raw_paths
+    WITH [n IN raw_nodes WHERE n IS NOT NULL] AS nodes,
+         [p IN raw_paths WHERE p IS NOT NULL] AS paths
+    WITH nodes, reduce(all_rels = [], p IN paths | all_rels + relationships(p)) AS rels
+    UNWIND CASE WHEN rels = [] THEN [NULL] ELSE rels END AS rel
+    WITH nodes, collect(
+      CASE
+        WHEN rel IS NULL THEN NULL
+        ELSE {{
+          source: coalesce(startNode(rel).id, startNode(rel).name, elementId(startNode(rel))),
+          target: coalesce(endNode(rel).id, endNode(rel).name, elementId(endNode(rel))),
+          relationship: type(rel),
+          properties: properties(rel)
+        }}
+      END
+    ) AS rel_rows
+    RETURN nodes, [row IN rel_rows WHERE row IS NOT NULL] AS rel_rows
     LIMIT 1
     """
 
@@ -144,30 +163,34 @@ async def explore_graph(
         return {"nodes": [], "edges": []}
 
     row = rows[0]
-    start_node = _serialize_node(row.get("start"))
-    if start_node is None:
-        return {"nodes": [], "edges": []}
-
-    nodes_by_id: dict[str, dict[str, Any]] = {start_node["id"]: start_node}
+    nodes_by_id: dict[str, dict[str, Any]] = {}
     edges_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
 
-    for node_path in row.get("node_paths", []) or []:
-        if not isinstance(node_path, list):
-            continue
-        for node in node_path:
-            parsed = _serialize_node(node)
-            if parsed:
-                nodes_by_id[parsed["id"]] = parsed
+    for node in row.get("nodes", []) or []:
+        parsed = _serialize_node(node)
+        if parsed:
+            nodes_by_id[parsed["id"]] = parsed
 
-    for rel_path in row.get("rel_paths", []) or []:
-        if not isinstance(rel_path, list):
+    for rel_row in row.get("rel_rows", []) or []:
+        if not isinstance(rel_row, dict):
             continue
-        for rel in rel_path:
-            parsed = _serialize_rel(rel)
-            if not parsed:
-                continue
-            key = (parsed["source"], parsed["target"], parsed["relationship"])
-            edges_by_key[key] = parsed
+        source = str(rel_row.get("source", "") or "")
+        target = str(rel_row.get("target", "") or "")
+        relationship = str(rel_row.get("relationship", "") or "")
+        if not source or not target or not relationship:
+            continue
+        properties = rel_row.get("properties", {})
+        if not isinstance(properties, dict):
+            properties = {}
+        parsed = {
+            "source": source,
+            "target": target,
+            "relationship": relationship,
+            "weight": 1.0,
+            "properties": {str(k): _safe_json_value(v) for k, v in properties.items()},
+        }
+        key = (parsed["source"], parsed["target"], parsed["relationship"])
+        edges_by_key[key] = parsed
 
     return {"nodes": list(nodes_by_id.values()), "edges": list(edges_by_key.values())}
 

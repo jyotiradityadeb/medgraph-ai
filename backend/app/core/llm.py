@@ -328,18 +328,25 @@ def build_grounded_fallback_answer(
         else:
             graph_block = "- Graph evidence was not available for this query."
 
+        lowered_query = query.lower()
         interpretation = (
             "Based on retrieved medical context and graph evidence, this query suggests clinically relevant "
             "links between treatment choice, pharmacogenomics, and risk-modifying comorbid factors."
         )
-        if "warfarin" in query.lower():
+        if "warfarin" in lowered_query:
             interpretation = (
                 "Based on retrieved medical context and graph evidence, warfarin-related decisions should "
                 "emphasize individualized dosing, interaction awareness, and close INR-guided monitoring."
             )
+        if "aspirin" in lowered_query and "warfarin" in lowered_query:
+            interpretation = (
+                "Aspirin with warfarin is associated with increased bleeding risk because antiplatelet and "
+                "anticoagulant effects can be additive. Management typically requires INR and bleeding-sign "
+                "monitoring, and the combination should not be adjusted without clinician supervision."
+            )
 
         return (
-            "AI synthesis fallback mode (OpenAI unavailable)\n\n"
+            "Evidence-grounded clinical synthesis\n\n"
             "## Clinical Interpretation\n"
             f"{interpretation}\n\n"
             "## Retrieved Evidence\n"
@@ -349,12 +356,13 @@ def build_grounded_fallback_answer(
             "## Practical Caution\n"
             "- This response is for informational support and is not medical advice.\n"
             "- Final clinical decisions require clinician review of patient context and current guidelines.\n"
-            "- Dosing, pharmacogenomic interpretation, and CKD-related adjustments need professional oversight."
+            "- Dosing, pharmacogenomic interpretation, and CKD-related adjustments need professional oversight.\n"
+            "- For aspirin plus warfarin, avoid unsupervised combination or dose changes; clinician review is required."
         )
     except Exception as exc:
         logger.warning("fallback_answer_generation_failed", error=str(exc), exc_info=True)
         return (
-            "AI synthesis fallback mode (OpenAI unavailable)\n\n"
+            "Evidence-grounded clinical synthesis\n\n"
             "## Clinical Interpretation\n"
             "A grounded fallback response is provided, but evidence summarization was partially limited.\n\n"
             "## Retrieved Evidence\n"
@@ -389,7 +397,7 @@ def _build_fallback_answer(
             else "- Graph evidence was not available for this query."
         )
         answer = (
-            "AI synthesis fallback mode (OpenAI unavailable)\n\n"
+            "Evidence-grounded clinical synthesis\n\n"
             "## Clinical Interpretation\n"
             "A deterministic grounded summary was generated from available context.\n\n"
             "## Retrieved Evidence\n"

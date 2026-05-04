@@ -2,14 +2,12 @@ import json
 import time
 from typing import Any
 
-import redis.asyncio as aioredis
 import structlog
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from openai import APIError, APITimeoutError, AsyncOpenAI, AuthenticationError, RateLimitError
 
 from app.api.deps import get_neo4j_service, get_openai_client, get_qdrant_service
-from app.config import get_settings
 from app.core.cache import query_cache
 from app.core.graph_rag import GraphRAGService
 from app.core.llm import LLMSynthesizer, _check_answer_grounding
@@ -24,12 +22,7 @@ from app.utils.metrics import metrics
 router = APIRouter(tags=["query"])
 logger = structlog.get_logger()
 
-_HISTORY_KEY = "query_history"
-_HISTORY_MAX = 500
-
-
-def _get_redis() -> aioredis.Redis:
-    return aioredis.from_url(get_settings().REDIS_URL, decode_responses=True)
+query_history: list[dict[str, Any]] = []
 
 
 @router.post("/query")
@@ -169,12 +162,13 @@ async def query(
 
             modalities_used = sorted({s.modality for s in sources})
 
-            if sources:
-                avg_score = sum(s.score for s in sources) / len(sources)
-                graph_boost = min(0.15, len(graph_context.nodes) * 0.005)
-                confidence = round(min(0.95, avg_score + graph_boost), 2)
-            else:
+            graph_nodes_count = len(graph_context.nodes)
+            if not sources and graph_nodes_count == 0:
                 confidence = 0.0
+            else:
+                base_confidence = 0.55 if graph_nodes_count > 0 else 0.35
+                source_boost = min(0.20, len(sources) * 0.05)
+                confidence = round(min(0.85, base_confidence + source_boost), 2)
 
             context = graph_service.build_context_string(sources, graph_context)
             stream_result = await synthesizer.generate_streaming(
@@ -289,7 +283,7 @@ async def query(
                 extra={"grounding_check": grounding_check},
             )
 
-            history_entry = json.dumps(
+            query_history.append(
                 {
                     "query": query_request.query,
                     "intent": intent_result.get("intent"),
@@ -300,13 +294,8 @@ async def query(
                     "answer_preview": full_answer[:250],
                 }
             )
-            try:
-                r = _get_redis()
-                await r.lpush(_HISTORY_KEY, history_entry)
-                await r.ltrim(_HISTORY_KEY, 0, _HISTORY_MAX - 1)
-                await r.aclose()
-            except Exception as exc:
-                logger.warning("query_history.redis.failed", error=str(exc))
+            if len(query_history) > 500:
+                query_history.pop(0)
 
         except Exception as exc:
             logger.error("query_failed", error=str(exc))
@@ -324,11 +313,4 @@ async def query(
 @router.get("/history")
 async def get_history(request: Request):
     _ = request
-    try:
-        r = _get_redis()
-        raw = await r.lrange(_HISTORY_KEY, 0, 19)
-        await r.aclose()
-        return {"history": [json.loads(item) for item in raw]}
-    except Exception as exc:
-        logger.warning("query_history.get.failed", error=str(exc))
-        return {"history": []}
+    return {"history": list(reversed(query_history[-20:]))}
