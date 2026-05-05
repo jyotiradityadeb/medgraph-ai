@@ -45,59 +45,59 @@ export function GraphCanvas({ nodes, edges }: GraphCanvasProps) {
     const container = containerRef.current;
     if (!container) return;
 
-    const graph = new Graph();
-    const timeouts: number[] = [];
+    container.innerHTML = "";
+    const graph = new Graph({ multi: true, type: "directed" });
 
-    nodes.forEach((node, index) => {
-      const t = window.setTimeout(() => {
-        if (!graph.hasNode(node.id)) {
-          graph.addNode(node.id, {
-            x: Math.random(),
-            y: Math.random(),
-            size: nodeSize(node.type),
-            color: NODE_COLORS[node.type] || NODE_COLORS.default,
-            label: node.label,
-          });
-        }
-      }, index * 30);
-      timeouts.push(t);
+    nodes.forEach((node) => {
+      if (node?.id && !graph.hasNode(node.id)) {
+        graph.addNode(node.id, {
+          x: Math.random(),
+          y: Math.random(),
+          size: nodeSize(node.type),
+          color: NODE_COLORS[node.type] ?? NODE_COLORS.default,
+          label: node.label || node.id,
+        });
+      }
     });
 
-    const edgeStartDelay = nodes.length * 30 + 50;
     edges.forEach((edge, index) => {
-      const t = window.setTimeout(() => {
-        if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) return;
-        const key = `${edge.source}-${edge.relationship}-${edge.target}-${index}`;
-        if (!graph.hasEdge(key)) {
+      if (!edge?.source || !edge?.target) return;
+      if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) return;
+      const key = `${edge.source}-${edge.relationship}-${edge.target}-${index}`;
+      if (!graph.hasEdge(key)) {
+        try {
           graph.addDirectedEdgeWithKey(key, edge.source, edge.target, {
             size: 1.5,
-            color: edgeColorByType(edge.relationship),
+            color: edgeColorByType(edge.relationship || "RELATED_TO"),
           });
+        } catch {
+          // Ignore malformed or duplicate edges and continue rendering.
         }
-      }, edgeStartDelay + index * 30);
-      timeouts.push(t);
+      }
     });
 
-    const layoutTimer = window.setTimeout(() => {
+    try {
       if (graph.order > 0) forceAtlas2.assign(graph, { iterations: 150 });
-      const renderer = new Sigma(graph, container, {
-        renderEdgeLabels: false,
-        defaultEdgeType: "arrow",
-        labelSize: 11,
-      });
-      sigmaRef.current = renderer;
+    } catch {
+      // Keep random node positions if layout fails.
+    }
 
-      renderer.on("enterNode", ({ node }) => setHoveredNodeId(String(node)));
-      renderer.on("leaveNode", () => setHoveredNodeId(null));
-      renderer.on("clickNode", ({ node }) => {
-        const found = nodeMap.get(String(node));
-        if (found) setSelectedNode(found);
-      });
-    }, edgeStartDelay + edges.length * 30 + 80);
-    timeouts.push(layoutTimer);
+    const renderer = new Sigma(graph, container, {
+      renderEdgeLabels: false,
+      defaultEdgeType: "arrow",
+      labelSize: 11,
+    });
+    sigmaRef.current = renderer;
+    renderer.refresh();
+
+    renderer.on("enterNode", ({ node }) => setHoveredNodeId(String(node)));
+    renderer.on("leaveNode", () => setHoveredNodeId(null));
+    renderer.on("clickNode", ({ node }) => {
+      const found = nodeMap.get(String(node));
+      if (found) setSelectedNode(found);
+    });
 
     return () => {
-      for (const t of timeouts) window.clearTimeout(t);
       setHoveredNodeId(null);
       if (sigmaRef.current) {
         sigmaRef.current.kill();
@@ -134,7 +134,7 @@ export function GraphCanvas({ nodes, edges }: GraphCanvasProps) {
   };
 
   return (
-    <div className="relative h-full min-h-[560px] overflow-hidden rounded-lg border border-slate-200 bg-white">
+    <div className="relative h-[560px] overflow-hidden rounded-lg border border-slate-200 bg-white">
       <GraphControls onZoomIn={zoomIn} onZoomOut={zoomOut} onReset={resetCamera} onFullscreen={fullscreen} />
       {hoveredNodeId && (
         <div className="absolute left-3 top-3 z-10 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 shadow-sm">

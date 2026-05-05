@@ -116,6 +116,20 @@ class ImageEmbedder:
                 cls._processor = None
         return cls._model, cls._processor
 
+    def _normalize_to_384(self, vec: list[float]) -> list[float]:
+        """Project or pad vector to 384 dimensions for consistent storage."""
+        if len(vec) == 384:
+            return vec
+        arr = np.array(vec, dtype=float)
+        if len(vec) > 384:
+            # Simple truncation + renormalization
+            arr = arr[:384]
+        else:
+            # Pad with zeros
+            arr = np.pad(arr, (0, 384 - len(arr)))
+        norm = np.linalg.norm(arr)
+        return (arr / norm).tolist() if norm else arr.tolist()
+
     def embed_image(self, image_bytes: bytes) -> list[float]:
         model, processor = self.get_model()
         if model is None or processor is None:
@@ -132,7 +146,7 @@ class ImageEmbedder:
             with torch.no_grad():
                 features = model.get_image_features(**inputs)
                 features = features / features.norm(dim=-1, keepdim=True)
-            return features[0].tolist()
+            return self._normalize_to_384(features[0].tolist())
         except Exception as exc:
             logger.warning("image_embedding_failed_fallback", error=str(exc))
             image_key = hashlib.sha256(image_bytes).hexdigest()
@@ -152,7 +166,7 @@ class ImageEmbedder:
             with torch.no_grad():
                 features = model.get_text_features(**inputs)
                 features = features / features.norm(dim=-1, keepdim=True)
-            return features[0].tolist()
+            return self._normalize_to_384(features[0].tolist())
         except Exception as exc:
             logger.warning("image_text_embedding_failed_fallback", error=str(exc))
             return fallback_embedding(text)

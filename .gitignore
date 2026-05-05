@@ -28,3 +28,9 @@ frontend/dist/
 Thumbs.db
 .vscode/
 .idea/
+
+# Local agent/editor artifacts
+.claude/
+backend/audit.log
+query_payload.json
+graph-working.png

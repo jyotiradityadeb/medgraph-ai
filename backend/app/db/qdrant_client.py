@@ -18,7 +18,7 @@ logger = structlog.get_logger()
 
 COLLECTIONS = {
     "medical_text": {"size": 384, "distance": Distance.COSINE},
-    "medical_images": {"size": 512, "distance": Distance.COSINE},
+    "medical_images": {"size": 384, "distance": Distance.COSINE},
     "medical_audio": {"size": 384, "distance": Distance.COSINE},
     "medical_tables": {"size": 384, "distance": Distance.COSINE},
 }

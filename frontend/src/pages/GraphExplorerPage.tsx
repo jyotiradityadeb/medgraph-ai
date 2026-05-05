@@ -80,6 +80,13 @@ export function GraphExplorerPage() {
               setQuery(e.target.value);
               setShowResults(true);
             }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                const q = query.trim();
+                if (q) void exploreEntity(q);
+              }
+            }}
             placeholder="Search graph entity..."
             className="w-full rounded-md border border-slate-300 py-2 pl-8 pr-3 text-sm outline-none focus:border-primary"
           />

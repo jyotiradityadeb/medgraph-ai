@@ -129,11 +129,13 @@ class MultiModalIngestPipeline:
         try:
             await qdrant_module.qdrant_service.upsert("medical_images", image_vector, payload)
         except Exception as exc:
-            logger.warning(
-                "image_vector_upsert_failed_fallback_to_text",
+            logger.error(
+                "image_vector_upsert_failed",
                 doc_id=doc_id,
                 error=str(exc),
+                exc_info=True,
             )
+            raise
 
         text_vector = self.text_embedder.embed(description)
         text_payload = {

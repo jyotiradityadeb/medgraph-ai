@@ -135,11 +135,17 @@ async def explore_graph(
        OR connected:LabTest
     WITH collect(DISTINCT start) + collect(DISTINCT connected) AS raw_nodes,
          collect(path) AS raw_paths
-    WITH [n IN raw_nodes WHERE n IS NOT NULL] AS nodes,
+    WITH [n IN raw_nodes WHERE n IS NOT NULL] AS raw_nodes,
          [p IN raw_paths WHERE p IS NOT NULL] AS paths
-    WITH nodes, reduce(all_rels = [], p IN paths | all_rels + relationships(p)) AS rels
+    WITH [n IN raw_nodes | {{
+           id:   coalesce(n.id, n.name, toString(elementId(n))),
+           name: coalesce(n.name, n.id, ''),
+           type: coalesce(labels(n)[0], 'Unknown'),
+           props: properties(n)
+         }}] AS node_data,
+         reduce(all_rels = [], p IN paths | all_rels + relationships(p)) AS rels
     UNWIND CASE WHEN rels = [] THEN [NULL] ELSE rels END AS rel
-    WITH nodes, collect(
+    WITH node_data, collect(
       CASE
         WHEN rel IS NULL THEN NULL
         ELSE {{
@@ -150,7 +156,7 @@ async def explore_graph(
         }}
       END
     ) AS rel_rows
-    RETURN nodes, [row IN rel_rows WHERE row IS NOT NULL] AS rel_rows
+    RETURN node_data, [row IN rel_rows WHERE row IS NOT NULL] AS rel_rows
     LIMIT 1
     """
 
@@ -166,10 +172,25 @@ async def explore_graph(
     nodes_by_id: dict[str, dict[str, Any]] = {}
     edges_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
 
-    for node in row.get("nodes", []) or []:
-        parsed = _serialize_node(node)
-        if parsed:
-            nodes_by_id[parsed["id"]] = parsed
+    for nd in row.get("node_data", []) or []:
+        if not isinstance(nd, dict):
+            continue
+        node_id = str(nd.get("id") or "")
+        if not node_id:
+            continue
+        raw_props = nd.get("props") or {}
+        if not isinstance(raw_props, dict):
+            raw_props = {}
+        nodes_by_id[node_id] = {
+            "id": node_id,
+            "label": str(nd.get("name") or node_id),
+            "type": str(nd.get("type") or "Unknown"),
+            "properties": {
+                str(k): _safe_json_value(v)
+                for k, v in raw_props.items()
+                if k not in {"id", "name"} and v is not None
+            },
+        }
 
     for rel_row in row.get("rel_rows", []) or []:
         if not isinstance(rel_row, dict):

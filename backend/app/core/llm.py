@@ -479,6 +479,8 @@ def _check_answer_grounding(
 
 
 class LLMSynthesizer:
+    _fallback_warned = False
+
     def __init__(self, openai_client):
         self.client = openai_client
 
@@ -527,6 +529,13 @@ class LLMSynthesizer:
             )
             return {"stream": stream, "mode": "live", "reason": "", "llm_status": "ok"}
         except (AuthenticationError, APIError, RateLimitError, APITimeoutError, TimeoutError) as exc:
+            if not LLMSynthesizer._fallback_warned:
+                LLMSynthesizer._fallback_warned = True
+                logger.warning(
+                    "LLM_FALLBACK_MODE_ACTIVE: No valid OpenAI key detected. "
+                    "System running in graph+vector-only demo mode. "
+                    "Set OPENAI_API_KEY in .env for live LLM synthesis."
+                )
             logger.warning("llm_streaming_openai_fallback", error=str(exc), model=model, exc_info=True)
             fallback_payload = self.build_fallback_payload(
                 query, context, retrieved_chunks, graph_context

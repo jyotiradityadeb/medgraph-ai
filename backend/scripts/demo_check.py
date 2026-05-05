@@ -1,9 +1,15 @@
+import os
 import sys
 import time
 
 import httpx
 
 BASE = "http://localhost:8000"
+_API_KEY = os.environ.get("API_KEY", "")
+
+
+def _headers() -> dict:
+    return {"X-API-Key": _API_KEY} if _API_KEY else {}
 
 
 def check(label, fn):
@@ -24,7 +30,7 @@ def run():
     results.append(
         check(
             "Backend health",
-            lambda: httpx.get(f"{BASE}/health", timeout=5).raise_for_status(),
+            lambda: httpx.get(f"{BASE}/health", timeout=5, headers=_headers()).raise_for_status(),
         )
     )
 
@@ -36,6 +42,7 @@ def run():
                 f"{BASE}/api/v1/ingest/text",
                 json={"content": "Patient with warfarin and AF.", "source": "demo_check"},
                 timeout=30,
+                headers=_headers(),
             ).raise_for_status(),
         )
     )
@@ -47,6 +54,7 @@ def run():
             lambda: httpx.get(
                 f"{BASE}/api/v1/graph/explore?entity=Warfarin&depth=1",
                 timeout=10,
+                headers=_headers(),
             ).raise_for_status(),
         )
     )
@@ -58,6 +66,7 @@ def run():
             lambda: httpx.get(
                 f"{BASE}/api/v1/graph/search?q=warfarin",
                 timeout=10,
+                headers=_headers(),
             ).raise_for_status(),
         )
     )
@@ -77,6 +86,7 @@ def run():
                     "model": "gpt-4o",
                 },
                 timeout=5,
+                headers=_headers(),
             ),
         )
     )  # just check it starts, not full response
@@ -85,7 +95,7 @@ def run():
     results.append(
         check(
             "Metrics endpoint",
-            lambda: httpx.get(f"{BASE}/api/v1/metrics", timeout=5).raise_for_status(),
+            lambda: httpx.get(f"{BASE}/api/v1/metrics", timeout=5, headers=_headers()).raise_for_status(),
         )
     )
 
@@ -97,6 +107,7 @@ def run():
                 f"{BASE}/api/v1/ingest/table",
                 json={"lab_values": {"HbA1c": 8.5, "eGFR": 55}, "patient_id": "demo"},
                 timeout=15,
+                headers=_headers(),
             ).raise_for_status(),
         )
     )
@@ -111,7 +122,7 @@ def run():
     elif passed >= 5:
         print("STATUS: MOSTLY READY — fix failing checks before demo")
     else:
-        print("STATUS: NOT READY — run docker-compose up -d and make seed first")
+        print("STATUS: NOT READY — run docker compose up -d and seed first")
 
     return 0 if passed >= 5 else 1
 

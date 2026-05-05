@@ -43,13 +43,27 @@ MedGraph AI is a production-style multi-modal Graph RAG clinical knowledge navig
 - (Optional) GNU Make
 - OpenAI and/or Anthropic API key for live LLM responses
 
+## Fallback / Demo Mode
+
+MedGraph AI runs fully without an OpenAI API key. In fallback mode:
+- Graph search and explore endpoints work normally (Neo4j-backed)
+- Vector retrieval works normally (Qdrant-backed, sentence-transformers)
+- Query endpoint returns graph+vector synthesized answers
+- LLM synthesis (GPT-4o) is disabled; structured fallback responses are returned
+- Image upload is accepted; description generation is skipped
+- Audio upload is accepted; Whisper transcription is skipped
+
+Set `OPENAI_API_KEY` in `.env` to enable live LLM features.
+
 ## Quick Start
 
 ```bash
 cp .env.example .env
-docker-compose build
-docker-compose up -d
-docker-compose logs -f backend
+# For demo/local use, no API key is required.
+# Add your OPENAI_API_KEY to .env for live LLM responses.
+docker compose build
+docker compose up -d
+docker compose logs -f backend
 open http://localhost:3000
 ```
 
@@ -71,25 +85,25 @@ curl http://localhost:6333
 ```bash
 cp .env.example .env
 # Edit .env and add your OPENAI_API_KEY
-docker-compose up -d --build
+docker compose up -d --build
 ```
 
 ### Step 2 — Wait for services to be healthy (60-90 seconds)
 ```bash
-docker-compose ps
+docker compose ps
 # All services should show "healthy" or "running"
 ```
 
 ### Step 3 — Seed the knowledge graph and vector data
 ```bash
-docker-compose exec backend python scripts/seed_graph.py
-docker-compose exec backend python scripts/seed_vectors.py
-docker-compose exec backend python scripts/seed_demo_scenarios.py
+docker compose exec backend python scripts/seed_graph.py
+docker compose exec backend python scripts/seed_vectors.py
+docker compose exec backend python scripts/seed_demo_scenarios.py
 ```
 
 ### Step 4 — Verify everything works
 ```bash
-docker-compose exec backend python scripts/demo_check.py
+docker compose exec backend python scripts/demo_check.py
 # Should print: STATUS: DEMO READY
 ```
 
@@ -104,7 +118,7 @@ http://localhost:3000
 - "How does furosemide cause hypokalemia?"
 
 ### Troubleshooting
-- If Neo4j takes too long: check docker-compose logs neo4j
+- If Neo4j takes too long: check docker compose logs neo4j
 - If models are slow first run: they are downloading, wait 2-3 min
 - If OpenAI errors: check your API key in .env, fallbacks are active
 
