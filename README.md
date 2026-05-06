@@ -36,6 +36,28 @@ MedGraph AI is a production-style multi-modal Graph RAG clinical knowledge navig
                                      +---------------+
 ```
 
+## Literature Survey
+
+1. **Retrieval-Augmented Generation (RAG)**  
+Lewis et al. introduced RAG as a method that combines a parametric language model with external retrieval. This allows systems to answer using retrieved knowledge instead of relying only on model memory.  
+Source: [Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks](https://arxiv.org/abs/2005.11401)
+
+2. **GraphRAG**  
+GraphRAG extends RAG by using knowledge graphs to capture entities, relationships, and community-level context. This helps with complex questions where relationships matter more than simple semantic similarity.  
+Source: [Microsoft GraphRAG](https://microsoft.github.io/graphrag/)
+
+3. **Graph Retrieval-Augmented Generation Survey**  
+Recent surveys show that GraphRAG improves contextual reasoning by combining graph structure with LLM generation, especially for multi-hop and domain-specific questions.  
+Source: [Graph Retrieval-Augmented Generation: A Survey](https://arxiv.org/abs/2408.08921)
+
+4. **Vector Databases and Hybrid Retrieval**  
+Qdrant supports vector search, metadata filtering, and hybrid retrieval techniques such as Reciprocal Rank Fusion, useful when combining results from multiple modalities.  
+Source: [Qdrant Hybrid Queries](https://qdrant.tech/documentation/concepts/hybrid-queries/)
+
+5. **Neo4j for Graph-Based AI**  
+Neo4j supports graph traversal and GraphRAG workflows where structured relationships are used to improve question answering.  
+Source: [Neo4j GraphRAG](https://neo4j.com/labs/genai-ecosystem/graphrag/)
+
 ## Prerequisites
 
 - Docker Desktop 24+
